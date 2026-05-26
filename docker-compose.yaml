@@ -1,0 +1,88 @@
+version: "3.9"
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - trend-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on: [zookeeper]
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - trend-network
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - trend-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  trending:
+    build: .
+    depends_on:
+      - kafka
+      - redis
+    ports: ["8080:8080"]
+    environment:
+      # HTTP Server
+      SERVER_ADDRESS: ${SERVER_ADDRESS:-:8080}
+      SERVER_READ_TIMEOUT: ${SERVER_READ_TIMEOUT:-15s}
+      SERVER_WRITE_TIMEOUT: ${SERVER_WRITE_TIMEOUT:-15s}
+      SERVER_IDLE_TIMEOUT: ${SERVER_IDLE_TIMEOUT:-120s}
+      SERVER_SHUTDOWN_TIMEOUT: ${SERVER_SHUTDOWN_TIMEOUT:-30s}
+      
+      # Aggregator
+      WINDOW_SECONDS: ${WINDOW_SECONDS:-300}
+      SNAPSHOT_INTERVAL: ${SNAPSHOT_INTERVAL:-500ms}
+      DEFAULT_TOP_N: ${DEFAULT_TOP_N:-10}
+      MAX_TOP_N: ${MAX_TOP_N:-100}
+      DEDUP_TTL: ${DEDUP_TTL:-10s}
+      SHARDS: ${SHARDS:-16}
+      WORKER_COUNT: ${WORKER_COUNT:-4}
+      MAX_CLOCK_SKEW: ${MAX_CLOCK_SKEW:-60s}
+      
+      # Kafka
+      BROKERS: ${BROKERS:-kafka:9092}
+      TOPIC: ${TOPIC:-search-queries}
+      GROUP_ID: ${GROUP_ID:-trend-service-group}
+      
+      # Redis
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+    networks:
+      - trend-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    networks:
+      - trend-network
+
+networks:
+  trend-network:
+    driver: bridge
+
+volumes:
+  redis-data:
