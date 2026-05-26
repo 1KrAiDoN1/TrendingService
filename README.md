@@ -1,82 +1,92 @@
 # Trend Service - Сервис трендовых поисковых запросов
 
-Highload сервис для отображения топа самых популярных поисковых запросов за последние 5 минут в реальном времени для маркетплейса Wildberries.
+Highload сервис для отображения топа самых популярных поисковых запросов за последние 5 минут в реальном времени.
 
-## 📋 Оглавление
+## Оглавление
 
-- [Быстрый старт](#быстрый-старт)
-- [Контракт данных](#контракт-данных)
-- [API](#api)
 - [Архитектура](#архитектура)
-- [Trade-offs и компромиссы](#trade-offs-и-компромиссы)
-- [Мониторинг (Prometheus)](#мониторинг-prometheus)
-- [Нагрузочное тестирование](#нагрузочное-тестирование)
+- [Контракт данных](#контракт-данных)
+- [Быстрый старт](#быстрый-старт)
+- [API](#api)
 - [Конфигурация](#конфигурация)
+- [Архитектурные решения](#архитектурные-решения)
+- [Trade-offs и компромиссы](#trade-offs-и-компромиссы)
+- [Метрики](#метрики)
 
----
+## Архитектура
 
-## 🚀 Быстрый старт
+### Компоненты системы
 
-### Требования
-
-- Docker и Docker Compose
-- Go 1.25+ (для локальной разработки)
-- Make (опционально)
-
-### Запуск через Docker Compose
-
-```bash
-# Клонируем репозиторий
-git clone <repository-url>
-cd trend_service
-
-# Запускаем все сервисы (Kafka, Redis, Trend Service, Prometheus)
-docker-compose up -d
-
-# Проверяем статус
-docker-compose ps
-
-# Смотрим логи
-docker-compose logs -f trending
+```
+┌─────────────┐      ┌──────────────┐      ┌─────────────┐
+│   Kafka     │─────▶│   Consumer   │─────▶│ Aggregator  │
+│  (брокер)   │      │  (воркеры)   │      │  (шарды)    │
+└─────────────┘      └──────────────┘      └─────────────┘
+                                                   │
+                                                   ▼
+┌─────────────┐      ┌──────────────┐      ┌─────────────┐
+│   Redis     │◀────▶│  Stoplist    │◀─────│ HTTP Server │
+│ (стоп-лист) │      │              │      │   (API)     │
+└─────────────┘      └──────────────┘      └─────────────┘
+                                                   │
+                                                   ▼
+                                            ┌─────────────┐
+                                            │ Prometheus  │
+                                            │  (метрики)  │
+                                            └─────────────┘
 ```
 
-**Сервисы будут доступны:**
-- **Trend Service API**: http://localhost:8080
-- **Prometheus**: http://localhost:9090
-- **Kafka**: localhost:9092
-- **Redis**: localhost:6379
+### Принципы проектирования
 
-### Локальный запуск (для разработки)
+Проект следует принципам **SOLID** и **чистой архитектуры**:
 
-```bash
-# Запускаем только инфраструктуру
-docker-compose up -d kafka redis prometheus
+1. **Single Responsibility Principle (SRP)**: Каждый компонент отвечает за одну задачу
+   - `Aggregator` - агрегация и подсчет запросов
+   - `Consumer` - чтение из Kafka
+   - `Stoplist` - управление стоп-листом
+   - `HTTPServer` - обработка HTTP запросов
 
-# Устанавливаем зависимости
-go mod download
+2. **Open/Closed Principle (OCP)**: Система открыта для расширения, закрыта для модификации
+   - Интерфейсы `Consumer` и `CacheClient` позволяют легко заменить Kafka на NATS/RabbitMQ, а Redis на другое хранилище
 
-# Запускаем сервис
-make run
-# или
-go run cmd/server/main.go
+3. **Liskov Substitution Principle (LSP)**: Любая реализация интерфейса может быть заменена
+   - `KafkaConsumer` реализует `Consumer`
+   - `RedisClient` реализует `CacheClient`
+
+4. **Interface Segregation Principle (ISP)**: Интерфейсы специфичны и минимальны
+   - `Consumer` содержит только методы для чтения сообщений
+   - `CacheClient` содержит только необходимые операции с кешем
+
+5. **Dependency Inversion Principle (DIP)**: Зависимости направлены на абстракции
+   - Все компоненты зависят от интерфейсов, а не от конкретных реализаций
+
+### Структура проекта
+
+```
+.
+├── cmd/
+│   └── server/          # Точка входа приложения
+├── internal/
+│   ├── app/             # Сборка и инициализация приложения
+│   ├── domain/          # Доменные сущности
+│   ├── aggregator/      # Агрегация и подсчет топа
+│   ├── consumer/        # Интерфейс и реализации консьюмеров
+│   │   └── kafka/       # Kafka консьюмер
+│   ├── cache/           # Интерфейс и реализации кеша
+│   │   └── redis/       # Redis клиент
+│   ├── stoplist/        # Управление стоп-листом
+│   ├── http-server/     # HTTP API
+│   ├── config/          # Конфигурация
+│   └── metrics/         # Prometheus метрики
+├── pkg/
+│   ├── contract/        # Контракт данных из Kafka
+│   └── lib/logger/      # Логирование (zap)
+└── docker-compose.yaml  # Локальный запуск
 ```
 
-### Генерация тестовых событий
-
-```bash
-# Используем скрипт для генерации событий в Kafka
-go run scripts/produce_events.go
-```
-
----
-
-## 📦 Контракт данных
+## Контракт данных
 
 ### Формат события в Kafka
-
-**Topic:** `search-queries`
-
-**Формат сообщения (JSON):**
 
 ```json
 {
@@ -88,28 +98,53 @@ go run scripts/produce_events.go
 }
 ```
 
-### Обоснование полей
 
-| Поле | Тип | Обязательное | Назначение |
-|------|-----|--------------|------------|
-| `query` | string | ✅ | **Поисковый запрос пользователя**. Основное поле для агрегации. Нормализуется (lowercase, trim, collapse spaces) для корректного подсчета. |
-| `user_id` | string | ❌ | **Идентификатор пользователя**. Используется для дедупликации накруток. Один пользователь = один голос за окно дедупа (10 секунд). Защищает от простых скриптов, генерирующих множество запросов. |
-| `session_id` | string | ❌ | **Идентификатор сессии**. Fallback для дедупликации, если `user_id` отсутствует (анонимные пользователи). Позволяет отсекать накрутки даже для неавторизованных пользователей. |
-| `request_id` | string | ❌ | **Уникальный идентификатор запроса**. Для трейсинга, отладки и корреляции логов. Не используется в бизнес-логике, но критичен для операционной поддержки. |
-| `timestamp` | int64 | ✅ | **Unix timestamp в секундах**. Для отсечения опоздавших событий (старше 5 минут) и событий из будущего (clock skew). Обеспечивает корректное бакетирование в скользящем окне. |
 
-### Что НЕ включено и почему
+**Что НЕ включено и почему:**
+- Геолокация, категория, фильтры - не нужны для глобального топа
+- IP адрес - избыточно при наличии `user_id`/`session_id`
+- User-Agent - не влияет на подсчет трендов
 
-- **Геолокация** - не нужна для глобального топа
-- **Категория товара** - топ строится по всем категориям
-- **Фильтры поиска** - не влияют на популярность запроса
-- **IP адрес** - избыточно при наличии `user_id`/`session_id`
-- **User-Agent** - не влияет на подсчет трендов
-- **Результаты поиска** - не нужны для агрегации
+## Быстрый старт
 
----
+### Требования
 
-## 🔌 API
+- Docker и Docker Compose
+- Go 1.25+ (для локальной разработки)
+
+### Запуск через Docker Compose
+
+```bash
+# Клонируем репозиторий
+git clone <repository-url>
+cd trend_service
+
+# Запускаем все сервисы
+docker-compose up --build
+
+# Проверяем статус
+docker-compose ps
+
+# Смотрим логи
+docker-compose logs -f trending
+```
+
+Сервисы будут доступны:
+- **Trend Service API**: http://localhost:8080
+- **Prometheus**: http://localhost:9090
+- **Kafka**: localhost:9092
+- **Redis**: localhost:6379
+
+
+
+### Генерация тестовых событий
+
+```bash
+# Используем скрипт для генерации событий
+go run scripts/produce_events.go
+```
+
+## API
 
 ### 1. Получение топа запросов
 
@@ -142,14 +177,6 @@ curl http://localhost:8080/top?n=5
     {
       "query": "macbook air m3",
       "count": 987
-    },
-    {
-      "query": "airpods pro 2",
-      "count": 856
-    },
-    {
-      "query": "playstation 5",
-      "count": 734
     }
   ]
 }
@@ -157,8 +184,6 @@ curl http://localhost:8080/top?n=5
 
 **Заголовки ответа:**
 - `Cache-Control: public, max-age=1` - позволяет кешировать на edge/CDN
-
----
 
 ### 2. Управление стоп-листом
 
@@ -185,7 +210,7 @@ curl http://localhost:8080/stoplist
 # Добавить слова в стоп-лист
 curl -X POST http://localhost:8080/stoplist \
   -H "Content-Type: application/json" \
-  -d '{"add": ["spam", "test", "xxx"]}'
+  -d '{"add": ["spam", "test"]}'
 
 # Удалить слова из стоп-листа
 curl -X POST http://localhost:8080/stoplist \
@@ -200,8 +225,6 @@ curl -X POST http://localhost:8080/stoplist \
 
 **Ответ:** `204 No Content`
 
----
-
 ### 3. Health Check
 
 **GET** `/healthz`
@@ -212,8 +235,6 @@ curl http://localhost:8080/healthz
 
 **Ответ:** `ok`
 
----
-
 ### 4. Метрики Prometheus
 
 **GET** `/metrics`
@@ -222,62 +243,47 @@ curl http://localhost:8080/healthz
 curl http://localhost:8080/metrics
 ```
 
----
+## Конфигурация
 
-## 🏗️ Архитектура
+Конфигурация через переменные окружения (файл `.env`):
 
-### Диаграмма компонентов
+```bash
+# HTTP Server
+SERVER_ADDRESS=:8080
+SERVER_READ_TIMEOUT=15s
+SERVER_WRITE_TIMEOUT=15s
+SERVER_IDLE_TIMEOUT=120s
+SERVER_SHUTDOWN_TIMEOUT=30s
 
+# Aggregator
+WINDOW_SECONDS=300              # Окно агрегации (5 минут)
+SNAPSHOT_INTERVAL=500ms         # Частота пересчета топа
+DEFAULT_TOP_N=10                # Размер топа по умолчанию
+MAX_TOP_N=100                   # Максимальный размер топа
+DEDUP_TTL=10s                   # TTL дедупликации
+SHARDS=16                       # Количество шардов
+WORKER_COUNT=4                  # Количество воркеров Kafka
+MAX_CLOCK_SKEW=60s              # Допустимое расхождение часов
+
+# Kafka
+BROKERS=localhost:9092
+TOPIC=search-queries
+GROUP_ID=trend-service-group
+
+# Redis
+REDIS_ADDR=localhost:6379
+REDIS_PASSWORD=
+REDIS_DB=0
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│   Kafka     │─────▶│   Consumer   │─────▶│ Aggregator  │
-│  (брокер)   │      │  (воркеры)   │      │  (шарды)    │
-└─────────────┘      └──────────────┘      └─────────────┘
-                                                   │
-                                                   ▼
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│   Redis     │◀────▶│  Stoplist    │◀─────│ HTTP Server │
-│ (стоп-лист) │      │              │      │   (Gin)     │
-└─────────────┘      └──────────────┘      └─────────────┘
-                                                   │
-                                                   ▼
-                                            ┌─────────────┐
-                                            │ Prometheus  │
-                                            │  (метрики)  │
-                                            └─────────────┘
-```
 
-### Принципы проектирования (SOLID)
+## Архитектурные решения
 
-Проект следует принципам **SOLID** и **чистой архитектуры**:
-
-1. **Single Responsibility Principle (SRP)**
-   - `Aggregator` - только агрегация и подсчет
-   - `Consumer` - только чтение из Kafka
-   - `Stoplist` - только управление стоп-листом
-   - `HTTPServer` - только обработка HTTP
-
-2. **Open/Closed Principle (OCP)**
-   - Интерфейсы `Consumer` и `CacheClient` позволяют легко заменить Kafka на NATS/RabbitMQ, а Redis на другое хранилище
-
-3. **Liskov Substitution Principle (LSP)**
-   - `KafkaConsumer` реализует `Consumer`
-   - `RedisClient` реализует `CacheClient`
-
-4. **Interface Segregation Principle (ISP)**
-   - Интерфейсы минимальны и специфичны
-
-5. **Dependency Inversion Principle (DIP)**
-   - Все компоненты зависят от интерфейсов, а не от конкретных реализаций
-
-### Ключевые архитектурные решения
-
-#### 1. Агрегатор с шардированием
+### 1. Агрегатор с шардированием
 
 **Проблема:** Высокая конкуренция за блокировки при записи счетчиков.
 
-**Решение:**
-- Окно разбито на 300 бакетов по 1 секунде (ring buffer)
+**Решение:** 
+- Окно разбито на N бакетов по 1 секунде
 - Шардирование по `hash(query)` - снижает contention
 - На запись лочим только текущий бакет конкретного шарда
 
@@ -285,20 +291,13 @@ curl http://localhost:8080/metrics
 ```go
 type shard struct {
     mu      sync.Mutex
-    buckets []map[string]int64  // ring buffer из 300 бакетов
+    buckets []map[string]int64  // ring buffer
     head    int                 // индекс текущего бакета
     headSec int64               // unix-секунда текущего бакета
 }
 ```
 
-**Преимущества:**
-- O(1) добавление события
-- Автоматическая очистка старых данных
-- Минимальная блокировка (только один бакет одного шарда)
-
----
-
-#### 2. Lock-free чтение топа
+### 2. Lock-free чтение топа
 
 **Проблема:** Чтение топа в 10-50 раз чаще записи. Блокировки на чтении убьют производительность.
 
@@ -308,24 +307,17 @@ type shard struct {
 - Клиенты всегда получают последний опубликованный снапшот без блокировок
 
 ```go
-type aggregator struct {
-    current atomic.Pointer[domain.TopSnapshot]
+type Aggregator struct {
+    current atomic.Pointer[Snapshot]
     // ...
 }
 
-func (a *aggregator) Snapshot() *domain.TopSnapshot {
+func (a *Aggregator) Snapshot() *Snapshot {
     return a.current.Load()  // lock-free!
 }
 ```
 
-**Преимущества:**
-- Нулевая задержка на чтении (~100ns)
-- Неограниченная пропускная способность чтения
-- Eventual consistency (задержка 500ms приемлема)
-
----
-
-#### 3. Стоп-лист через Redis
+### 3. Стоп-лист через Redis
 
 **Проблема:** Стоп-лист должен работать "на лету" и синхронизироваться между инстансами.
 
@@ -340,9 +332,7 @@ func (a *aggregator) Snapshot() *domain.TopSnapshot {
 - ❌ Database - слишком медленно для highload
 - ✅ Redis - быстро, персистентно, распределенно
 
----
-
-#### 4. Дедупликация накруток
+### 4. Дедупликация накруток
 
 **Проблема:** Конкуренты/парсеры генерируют аномальные всплески одних и тех же запросов.
 
@@ -356,19 +346,22 @@ type dedupCache struct {
     shards []*dedupShard
     ttl    time.Duration
 }
+
+func (d *dedupCache) shouldCount(userID, query string, nowUnix int64) bool {
+    key := userID + ":" + query
+    // Проверяем, голосовал ли пользователь за этот запрос недавно
+}
 ```
 
-**Ограничения:**
-- Не защищает от ботнетов (множество разных user_id)
-- Но отсекает простые скрипты и случайные дубликаты
-
----
-
-#### 5. Нормализация запросов
+### 5. Нормализация запросов
 
 **Проблема:** "iPhone 15", "iphone 15", "IPHONE  15" - это один запрос или три?
 
 **Решение:**
+- Приведение к lowercase
+- Схлопывание множественных пробелов
+- Trim пробелов по краям
+
 ```go
 func Normalize(q string) string {
     q = strings.ToLower(strings.TrimSpace(q))
@@ -377,13 +370,19 @@ func Normalize(q string) string {
 }
 ```
 
-- Приведение к lowercase
-- Схлопывание множественных пробелов
-- Trim пробелов по краям
+### 6. Graceful Shutdown
 
----
+**Проблема:** При остановке сервиса нужно корректно завершить все операции.
 
-## ⚖️ Trade-offs и компромиссы
+**Решение:**
+- Контекст с отменой по сигналу (SIGINT/SIGTERM)
+- Последовательное закрытие компонентов:
+  1. HTTP сервер (дожидаемся завершения активных запросов)
+  2. Kafka консьюмер (коммитим оффсеты)
+  3. Redis клиент (закрываем соединения)
+  4. Логгер (синхронизируем буферы)
+
+## Trade-offs и компромиссы
 
 ### 1. Eventual Consistency
 
@@ -395,10 +394,6 @@ func Normalize(q string) string {
 - Снапшот раз в 500ms = 2 пересчета в секунду
 - Задержка 500ms для виджета "Сейчас ищут" приемлема
 
-**Метрика:** `trending_snapshot_build_seconds` - время пересчета
-
----
-
 ### 2. At-Least-Once семантика Kafka
 
 **Компромисс:** Возможны дубликаты событий.
@@ -408,10 +403,6 @@ func Normalize(q string) string {
 - Для трендов дубликат события не критичен (±1 к счетчику)
 - Дедупликация по userID частично решает проблему
 
-**Метрика:** `trending_events_dropped_total{reason="dedup_or_window"}`
-
----
-
 ### 3. Стоп-лист применяется на чтении
 
 **Компромисс:** Запросы из стоп-листа все равно агрегируются.
@@ -419,12 +410,8 @@ func Normalize(q string) string {
 **Обоснование:**
 - Фильтрация на записи требует проверки Redis на каждое событие
 - При 100k events/sec это 100k запросов к Redis
-- Фильтрация на чтении = max 100 проверок Redis (размер топа)
+- Фильтрация на чтении = 1 проверка на элемент топа (max 100)
 - Изменения стоп-листа применяются мгновенно без пересчета
-
-**Метрика:** Нет дополнительной нагрузки на Redis
-
----
 
 ### 4. Фиксированное окно 5 минут
 
@@ -435,10 +422,6 @@ func Normalize(q string) string {
 - При 100k events/sec за 5 минут = 30M событий в памяти
 - Фиксированное окно = только счетчики в 300 бакетах
 
-**Память:** ~10MB для 16 шардов × 300 бакетов × 1000 уникальных запросов
-
----
-
 ### 5. Ограничение размера топа (max 100)
 
 **Компромисс:** Нельзя запросить топ-1000.
@@ -448,9 +431,39 @@ func Normalize(q string) string {
 - Больший топ требует больше памяти и времени на пересчет
 - Для виджета топ-100 более чем достаточно
 
----
+## Метрики
 
-## 🔍 Проблемы в продуктовой постановке и решения
+Сервис экспортирует метрики в формате Prometheus на `/metrics`:
+
+### Kafka Consumer
+
+- `trending_events_consumed_total` - всего событий прочитано
+- `trending_events_accepted_total` - событий принято в агрегатор
+- `trending_events_dropped_total{reason}` - событий отброшено (по причинам)
+
+### HTTP API
+
+- `trending_top_requests_total` - запросов к `/top`
+- `trending_top_latency_seconds` - латентность `/top` (histogram)
+
+### Aggregator
+
+- `trending_snapshot_build_seconds` - время пересчета снапшота (histogram)
+
+### Пример запросов в Prometheus
+
+```promql
+# RPS на /top
+rate(trending_top_requests_total[1m])
+
+# P99 латентность /top
+histogram_quantile(0.99, rate(trending_top_latency_seconds_bucket[5m]))
+
+# Процент отброшенных событий
+rate(trending_events_dropped_total[1m]) / rate(trending_events_consumed_total[1m])
+```
+
+## Проблемы в продуктовой постановке и решения
 
 ### 1. Неопределенность "реального времени"
 
@@ -458,20 +471,14 @@ func Normalize(q string) string {
 
 **Решение:** Снапшот обновляется каждые 500ms. Это баланс между актуальностью и производительностью.
 
----
-
 ### 2. Отсутствие SLA по латентности
 
 **Проблема:** "Максимально быстро" - это сколько миллисекунд?
 
-**Решение:**
+**Решение:** 
 - Lock-free чтение снапшота = ~100ns
 - Фильтрация стоп-листа = O(N) проверок Redis
-- **Целевая латентность P99 < 10ms**
-
-**Метрика:** `trending_top_latency_seconds`
-
----
+- Целевая латентность P99 < 10ms
 
 ### 3. Определение "накрутки"
 
@@ -480,17 +487,12 @@ func Normalize(q string) string {
 **Решение:**
 - Дедупликация: один пользователь = один голос за 10 секунд
 - Не решает проблему ботнетов, но отсекает простые скрипты
-- Для более сложной защиты нужен ML-based anomaly detection
-
----
 
 ### 4. Синхронизация стоп-листа
 
 **Проблема:** Как синхронизировать стоп-лист между инстансами?
 
 **Решение:** Redis как единый источник правды. Все инстансы читают из одного Set.
-
----
 
 ### 5. Обработка опоздавших событий
 
@@ -501,371 +503,79 @@ func Normalize(q string) string {
 - События старше окна (5 минут) отбрасываются
 - Метрика `events_dropped{reason="dedup_or_window"}` для мониторинга
 
----
-
-## 📊 Мониторинг (Prometheus)
-
-### Доступ к Prometheus
-
-После запуска через `docker-compose up -d`:
-
-1. Откройте браузер: **http://localhost:9090**
-2. Перейдите в раздел **Graph** или **Explore**
-
-### Основные метрики
-
-#### Kafka Consumer
-
-```promql
-# RPS входящих событий
-rate(trending_events_consumed_total[1m])
-
-# RPS принятых событий
-rate(trending_events_accepted_total[1m])
-
-# Процент отброшенных событий
-rate(trending_events_dropped_total[1m]) / rate(trending_events_consumed_total[1m]) * 100
-
-# Отброшенные события по причинам
-sum by (reason) (rate(trending_events_dropped_total[1m]))
-```
-
-#### HTTP API
-
-```promql
-# RPS на /top endpoint
-rate(trending_top_requests_total[1m])
-
-# P50 латентность /top
-histogram_quantile(0.50, rate(trending_top_latency_seconds_bucket[5m]))
-
-# P95 латентность /top
-histogram_quantile(0.95, rate(trending_top_latency_seconds_bucket[5m]))
-
-# P99 латентность /top
-histogram_quantile(0.99, rate(trending_top_latency_seconds_bucket[5m]))
-```
-
-#### Aggregator
-
-```promql
-# Время пересчета снапшота
-histogram_quantile(0.99, rate(trending_snapshot_build_seconds_bucket[5m]))
-```
-
-### Примеры запросов в Prometheus UI
-
-1. **График RPS входящих событий:**
-   ```
-   rate(trending_events_consumed_total[1m])
-   ```
-
-2. **График латентности P99:**
-   ```
-   histogram_quantile(0.99, rate(trending_top_latency_seconds_bucket[5m]))
-   ```
-
-3. **Процент отброшенных событий:**
-   ```
-   (rate(trending_events_dropped_total[1m]) / rate(trending_events_consumed_total[1m])) * 100
-   ```
-
-### Настройка алертов (опционально)
-
-Создайте файл `prometheus-alerts.yml`:
-
-```yaml
-groups:
-  - name: trend_service
-    rules:
-      - alert: HighLatency
-        expr: histogram_quantile(0.99, rate(trending_top_latency_seconds_bucket[5m])) > 0.05
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High P99 latency on /top endpoint"
-
-      - alert: HighDropRate
-        expr: rate(trending_events_dropped_total[5m]) / rate(trending_events_consumed_total[5m]) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "More than 10% events are being dropped"
-```
-
----
-
-## 🔥 Нагрузочное тестирование
-
-### Установка инструментов
-
-```bash
-# Установка hey (HTTP load generator)
-go install github.com/rakyll/hey@latest
-
-# Или через Homebrew (macOS)
-brew install hey
-```
-
-### Тест 1: Базовая нагрузка на /top
-
-```bash
-# 10,000 запросов, 100 конкурентных соединений
-hey -n 10000 -c 100 http://localhost:8080/top
-
-# Результат покажет:
-# - Requests/sec (RPS)
-# - Latency distribution (P50, P95, P99)
-# - Error rate
-```
-
-**Ожидаемые результаты:**
-- RPS: > 5000 req/sec
-- P99 latency: < 10ms
-- Error rate: 0%
-
----
-
-### Тест 2: Длительная нагрузка
-
-```bash
-# 60 секунд, 200 конкурентных соединений
-hey -z 60s -c 200 http://localhost:8080/top?n=10
-
-# Или через Makefile
-make load
-```
-
-**Что проверяем:**
-- Стабильность под нагрузкой
-- Отсутствие memory leaks
-- Деградация производительности со временем
-
----
-
-### Тест 3: Стресс-тест
-
-```bash
-# Максимальная нагрузка: 500 конкурентных соединений
-hey -z 30s -c 500 -q 10000 http://localhost:8080/top
-```
-
-**Цель:** Найти точку отказа системы
-
----
-
-### Тест 4: Генерация событий в Kafka
-
-```bash
-# Запускаем генератор событий
-go run scripts/produce_events.go
-
-# Параметры можно настроить в скрипте:
-# - RPS (events per second)
-# - Количество уникальных запросов
-# - Распределение популярности
-```
-
----
-
-### Мониторинг во время тестов
-
-Откройте Prometheus (http://localhost:9090) и наблюдайте метрики в реальном времени:
-
-```promql
-# RPS
-rate(trending_top_requests_total[1m])
-
-# Латентность P99
-histogram_quantile(0.99, rate(trending_top_latency_seconds_bucket[1m]))
-
-# CPU/Memory (если настроен node_exporter)
-process_cpu_seconds_total
-process_resident_memory_bytes
-```
-
----
-
-### Результаты нагрузочного тестирования
-
-**Конфигурация тестового окружения:**
-- CPU: 4 cores
-- RAM: 8GB
-- Kafka: 3 partitions
-- Redis: single instance
-- Trend Service: 1 instance, 4 workers
-
-**Результаты:**
-
-| Метрика | Значение |
-|---------|----------|
-| Max RPS (sustained) | 8,500 req/sec |
-| P50 latency | 2.3ms |
-| P95 latency | 5.8ms |
-| P99 latency | 8.2ms |
-| Error rate | 0% |
-| Memory usage | ~150MB |
-| CPU usage | ~60% |
-
-**Узкие места:**
-1. Redis - при очень высокой нагрузке на стоп-лист
-2. Kafka consumer - ограничен количеством партиций
-
-**Рекомендации для production:**
-- Увеличить количество партиций Kafka до 10-20
-- Использовать Redis Cluster для горизонтального масштабирования
-- Запустить 3-5 инстансов Trend Service за load balancer
-
----
-
-## ⚙️ Конфигурация
-
-Конфигурация через переменные окружения. Для локальной разработки используйте файл `.env`:
-
-```bash
-# Скопируйте пример конфигурации
-cp .env.example .env
-
-# Отредактируйте под свои нужды
-nano .env
-```
-
-### Переменные окружения
-
-#### HTTP Server
-```bash
-SERVER_ADDRESS=:8080                    # Адрес HTTP сервера
-SERVER_READ_TIMEOUT=15s                 # Таймаут чтения
-SERVER_WRITE_TIMEOUT=15s                # Таймаут записи
-SERVER_IDLE_TIMEOUT=120s                # Таймаут idle соединений
-SERVER_SHUTDOWN_TIMEOUT=30s             # Таймаут graceful shutdown
-```
-
-#### Aggregator
-```bash
-WINDOW_SECONDS=300                      # Окно агрегации (5 минут)
-SNAPSHOT_INTERVAL=500ms                 # Частота пересчета топа
-DEFAULT_TOP_N=10                        # Размер топа по умолчанию
-MAX_TOP_N=100                           # Максимальный размер топа
-DEDUP_TTL=10s                           # TTL дедупликации
-SHARDS=16                               # Количество шардов
-WORKER_COUNT=4                          # Количество воркеров Kafka
-MAX_CLOCK_SKEW=60s                      # Допустимое расхождение часов
-```
-
-#### Kafka
-```bash
-BROKERS=localhost:9092                  # Адреса брокеров (через запятую)
-TOPIC=search-queries                    # Топик для чтения
-GROUP_ID=trend-service-group            # Consumer group ID
-```
-
-#### Redis
-```bash
-REDIS_ADDR=localhost:6379               # Адрес Redis
-REDIS_PASSWORD=                         # Пароль (если требуется)
-REDIS_DB=0                              # Номер базы данных
-```
-
-### Docker Compose
-
-При использовании Docker Compose переменные можно переопределить через `.env` файл или напрямую в `docker-compose.yaml`. Все переменные имеют значения по умолчанию:
-
-```yaml
-environment:
-  SERVER_ADDRESS: ${SERVER_ADDRESS:-:8080}
-  BROKERS: ${BROKERS:-kafka:9092}
-  # и т.д.
-```
-
-### Рекомендации для production
-
-- **WINDOW_SECONDS**: 300 (5 минут) - оптимально для трендов
-- **SNAPSHOT_INTERVAL**: 500ms - баланс между актуальностью и нагрузкой
-- **SHARDS**: 16-32 - зависит от количества CPU
-- **WORKER_COUNT**: равно количеству партиций Kafka
-- **DEDUP_TTL**: 10-30s - зависит от требований к защите от накруток
-
----
-
-## 🧪 Тестирование
+## Тестирование
 
 ### Unit-тесты
 
 ```bash
 # Запуск всех тестов
-make test
-# или
-go test ./... -v
+go test ./...
 
 # С покрытием
-make test-coverage
-# или
-go test ./... -coverprofile=coverage.out
-go tool cover -html=coverage.out
+go test -cover ./...
+
+# Конкретный пакет
+go test ./internal/aggregator/...
 ```
 
-### Бенчмарки
+### Нагрузочное тестирование
 
 ```bash
-# Бенчмарки агрегатора
-make bench
-# или
-go test -bench=. -benchmem ./internal/aggregator
+# Установка hey
+go install github.com/rakyll/hey@latest
+
+# Тест /top endpoint
+hey -n 10000 -c 100 http://localhost:8080/top
+
+# Результаты покажут:
+# - Requests/sec
+# - Latency distribution (P50, P95, P99)
+# - Error rate
 ```
 
----
+## Мониторинг
 
-## 📈 Масштабирование
+### Grafana Dashboard
 
-### Горизонтальное
+Импортируйте дашборд из `grafana-dashboard.json` для визуализации:
+- RPS по эндпоинтам
+- Латентность (P50, P95, P99)
+- Процент отброшенных событий
+- Размер топа
+
+### Алерты
+
+Рекомендуемые алерты:
+- Латентность P99 > 50ms
+- Error rate > 1%
+- Процент отброшенных событий > 10%
+- Redis недоступен
+
+## Масштабирование
+
+### Горизонтальное масштабирование
 
 - Kafka Consumer Group автоматически распределяет партиции между инстансами
 - Redis стоп-лист общий для всех инстансов
 - Каждый инстанс независимо агрегирует свою часть событий
-- Stateless HTTP сервер - легко масштабируется
 
-### Вертикальное
+### Вертикальное масштабирование
 
 - Увеличить `SHARDS` для снижения contention
-- Увеличить `WORKER_COUNT` для параллелизма Kafka
-- Больше CPU = больше throughput
+- Увеличить `WORKER_COUNT` для параллельной обработки Kafka
+- Больше CPU = больше пропускная способность
 
----
+### Оптимизации для production
 
-## 🛠️ Полезные команды
+1. **CDN/Edge Cache** - кешировать `/top` на 1 секунду
+2. **Read Replicas Redis** - для масштабирования чтения стоп-листа
+3. **Kafka партиции** - больше партиций = больше параллелизм
+4. **Профилирование** - `pprof` для поиска узких мест
 
-```bash
-# Сборка
-make build
+## Лицензия
 
-# Запуск
-make run
+MIT
 
-# Тесты
-make test
+## Контакты
 
-# Линтер
-make lint
-
-# Форматирование
-make fmt
-
-# Очистка
-make clean
-
-# Docker
-make docker-up
-make docker-down
-make docker-logs
-
-# Нагрузочное тестирование
-make load
-
-# Генерация событий
-make produce
-```
-
-
+Для вопросов и предложений создавайте Issue в репозитории.

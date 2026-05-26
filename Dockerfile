@@ -13,7 +13,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/trending ./cmd/server/main.go
 
 # Финальный образ
-FROM gcr.io/distroless/static-debian11
+FROM alpine:latest
 
 # Копируем бинарник
 COPY --from=build /out/trending /trending

@@ -37,10 +37,10 @@ docker-restart: ## Перезапустить сервис
 	docker-compose restart trending
 
 produce: ## Генерировать тестовые события в Kafka (1000 RPS, 60 секунд)
-	go run scripts/produce_events.go -rps=1000 -duration=60
+	go run scripts/produce_events.go -brokers=localhost:9092 -topic=search-queries -rps=1000 -duration=60
 
 produce-high: ## Генерировать события с высокой нагрузкой (5000 RPS, 30 секунд)
-	go run scripts/produce_events.go -rps=5000 -duration=30
+	go run scripts/produce_events.go -brokers=localhost:9092 -topic=search-queries -rps=5000 -duration=30
 
 load: ## Нагрузочное тестирование (требуется hey)
 	@if command -v hey > /dev/null; then \
