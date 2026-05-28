@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 	"time"
-	"trendservice/internal/mocks"
+	"trendservice/internal/usecase/mocks"
 	"trendservice/pkg/contract"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +18,7 @@ import (
 func TestConsumer_WithMocks(t *testing.T) {
 	t.Run("consumer processes events correctly", func(t *testing.T) {
 		mockAgg := mocks.NewAggregator(t)
-		mockStoplist := mocks.NewStoplist(t)
+		mockStoplist := mocks.NewStoplistService(t)
 
 		event := &contract.SearchEvent{
 			Query:     "test query",
@@ -95,7 +95,7 @@ func TestSearchEventMarshaling(t *testing.T) {
 // TestMockExpectations демонстрирует использование Expecter в сгенерированных моках.
 func TestMockExpectations(t *testing.T) {
 	t.Run("using expecter for fluent assertions", func(t *testing.T) {
-		mockStoplist := mocks.NewStoplist(t)
+		mockStoplist := mocks.NewStoplistService(t)
 
 		// Используем Expecter для более читаемого синтаксиса
 		expecter := mockStoplist.EXPECT()

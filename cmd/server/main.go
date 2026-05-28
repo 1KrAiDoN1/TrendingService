@@ -10,4 +10,3 @@ func main() {
 		log.Fatalf("application error: %v", err)
 	}
 }
-

@@ -65,23 +65,37 @@ Highload сервис для отображения топа самых попу
 ```
 .
 ├── cmd/
-│   └── server/          # Точка входа приложения
+│   └── server/              # Точка входа приложения
 ├── internal/
-│   ├── app/             # Сборка и инициализация приложения
-│   ├── domain/          # Доменные сущности
-│   ├── aggregator/      # Агрегация и подсчет топа
-│   ├── consumer/        # Интерфейс и реализации консьюмеров
-│   │   └── kafka/       # Kafka консьюмер
-│   ├── cache/           # Интерфейс и реализации кеша
-│   │   └── redis/       # Redis клиент
-│   ├── stoplist/        # Управление стоп-листом
-│   ├── http-server/     # HTTP API
-│   ├── config/          # Конфигурация
-│   └── metrics/         # Prometheus метрики
+│   ├── app/                 # Сборка и инициализация приложения
+│   ├── domain/              # Доменные сущности (Event, TopEntry)
+│   ├── broker/
+│   │   └── consumer/        # Интерфейс и реализации консьюмеров
+│   │       └── kafka/       # Kafka консьюмер
+│   ├── repository/
+│   │   └── cache/           # Интерфейс и реализации кеша
+│   │       └── redis/       # Redis клиент
+│   ├── usecase/
+│   │   ├── aggregator/      # Агрегация и подсчет топа
+│   │   │   └── adapter/     # Реализация агрегатора (с дедупликацией)
+│   │   ├── stoplist/        # Управление стоп-листом
+│   │   └── mocks/           # Mock объекты для тестирования
+│   ├── http-server/         # HTTP API сервер
+│   │   ├── handler/         # Обработчики HTTP запросов
+│   │   └── routes/          # Определение маршрутов
+│   ├── config/              # Конфигурация приложения
+│   └── metrics/             # Prometheus метрики
 ├── pkg/
-│   ├── contract/        # Контракт данных из Kafka
-│   └── lib/logger/      # Логирование (zap)
-└── docker-compose.yaml  # Локальный запуск
+│   ├── contract/            # Контракт данных из Kafka
+│   └── lib/
+│       └── logger/
+│           └── zaplogger/   # Логирование (zap)
+├── scripts/                 # Утилиты и вспомогательные скрипты
+├── docker-compose.yaml      # Docker Compose для локального запуска
+├── Dockerfile               # Docker image конфигурация
+├── Makefile                 # Команды для разработки и тестирования
+├── prometheus.yml           # Конфигурация Prometheus
+└── go.mod                   # Go модули
 ```
 
 ## Контракт данных
@@ -163,7 +177,7 @@ curl http://localhost:8080/top?n=5
 **Пример ответа:**
 ```json
 {
-  "window_seconds": 300,
+  
   "generated_at": 1735228800123456789,
   "items": [
     {
@@ -178,7 +192,8 @@ curl http://localhost:8080/top?n=5
       "query": "macbook air m3",
       "count": 987
     }
-  ]
+  ],
+  "window_seconds": 300
 }
 ```
 
@@ -525,57 +540,74 @@ go test ./internal/aggregator/...
 go install github.com/rakyll/hey@latest
 
 # Тест /top endpoint
-hey -n 10000 -c 100 http://localhost:8080/top
+hey -z 60s -n 100000 -c 1000 'http://localhost:8080/top?n=10' 
 
-# Результаты покажут:
-# - Requests/sec
-# - Latency distribution (P50, P95, P99)
-# - Error rate
+Summary:
+  Total:        60.0277 secs
+  Slowest:      0.6268 secs
+  Fastest:      0.0004 secs
+  Average:      0.0600 secs
+  Requests/sec: 29042.0256
+  
+  Total data:   118546236 bytes
+  Size/request: 118 bytes
+
+Response time histogram:
+  0.000 [1]     |
+  0.063 [906050]        |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+  0.126 [81377] |■■■■
+  0.188 [9604]  |
+  0.251 [1304]  |
+  0.314 [520]   |
+  0.376 [364]   |
+  0.439 [330]   |
+  0.502 [221]   |
+  0.564 [101]   |
+  0.627 [128]   |
+
+
+Latency distribution:
+  10%% in 0.0132 secs
+  25%% in 0.0202 secs
+  50%% in 0.0296 secs
+  75%% in 0.0428 secs
+  90%% in 0.0616 secs
+  95%% in 0.0779 secs
+  99%% in 0.1362 secs
+
+Details (average, fastest, slowest):
+  DNS+dialup:   0.0000 secs, 0.0000 secs, 0.1386 secs
+  DNS-lookup:   0.0000 secs, 0.0000 secs, 0.0064 secs
+  req write:    0.0000 secs, 0.0000 secs, 0.0090 secs
+  resp wait:    0.0598 secs, 0.0003 secs, 0.5248 secs
+  resp read:    0.0000 secs, 0.0000 secs, 0.0190 secs
+
+Status code distribution:
+  [200] 1000000 responses
+
 ```
 
-## Мониторинг
-
-### Grafana Dashboard
-
-Импортируйте дашборд из `grafana-dashboard.json` для визуализации:
-- RPS по эндпоинтам
-- Латентность (P50, P95, P99)
-- Процент отброшенных событий
-- Размер топа
-
-### Алерты
-
-Рекомендуемые алерты:
-- Латентность P99 > 50ms
-- Error rate > 1%
-- Процент отброшенных событий > 10%
-- Redis недоступен
-
-## Масштабирование
-
-### Горизонтальное масштабирование
-
-- Kafka Consumer Group автоматически распределяет партиции между инстансами
-- Redis стоп-лист общий для всех инстансов
-- Каждый инстанс независимо агрегирует свою часть событий
-
-### Вертикальное масштабирование
-
-- Увеличить `SHARDS` для снижения contention
-- Увеличить `WORKER_COUNT` для параллельной обработки Kafka
-- Больше CPU = больше пропускная способность
-
-### Оптимизации для production
-
-1. **CDN/Edge Cache** - кешировать `/top` на 1 секунду
-2. **Read Replicas Redis** - для масштабирования чтения стоп-листа
-3. **Kafka партиции** - больше партиций = больше параллелизм
-4. **Профилирование** - `pprof` для поиска узких мест
-
-## Лицензия
-
-MIT
-
-## Контакты
-
-Для вопросов и предложений создавайте Issue в репозитории.
+```bash
+go run scripts/produce_events.go -brokers=localhost:9092 -topic=search-queries -rps=15000 -duration=30
+2026/05/28 23:24:08 Starting event producer: brokers=localhost:9092, topic=search-queries, rps=15000
+2026/05/28 23:24:08 Producing events at 15000 RPS...
+2026/05/28 23:24:10 Sent: 25000 events, Elapsed: 2s, Actual RPS: 14715.29
+2026/05/28 23:24:11 Sent: 50000 events, Elapsed: 3s, Actual RPS: 14849.00
+2026/05/28 23:24:13 Sent: 75000 events, Elapsed: 5s, Actual RPS: 14544.94
+2026/05/28 23:24:15 Sent: 100000 events, Elapsed: 7s, Actual RPS: 14621.74
+2026/05/28 23:24:16 Sent: 125000 events, Elapsed: 9s, Actual RPS: 14655.34
+2026/05/28 23:24:18 Sent: 150000 events, Elapsed: 10s, Actual RPS: 14688.66
+2026/05/28 23:24:20 Sent: 175000 events, Elapsed: 12s, Actual RPS: 14583.40
+2026/05/28 23:24:22 Sent: 200000 events, Elapsed: 14s, Actual RPS: 14605.02
+2026/05/28 23:24:23 Sent: 225000 events, Elapsed: 15s, Actual RPS: 14608.90
+2026/05/28 23:24:25 Sent: 250000 events, Elapsed: 17s, Actual RPS: 14580.47
+2026/05/28 23:24:27 Sent: 275000 events, Elapsed: 19s, Actual RPS: 14617.49
+2026/05/28 23:24:28 Sent: 300000 events, Elapsed: 21s, Actual RPS: 14633.63
+2026/05/28 23:24:30 Sent: 325000 events, Elapsed: 22s, Actual RPS: 14657.66
+2026/05/28 23:24:32 Sent: 350000 events, Elapsed: 24s, Actual RPS: 14681.24
+2026/05/28 23:24:33 Sent: 375000 events, Elapsed: 26s, Actual RPS: 14701.69
+2026/05/28 23:24:35 Sent: 400000 events, Elapsed: 27s, Actual RPS: 14719.96
+2026/05/28 23:24:37 Sent: 425000 events, Elapsed: 29s, Actual RPS: 14702.54
+2026/05/28 23:24:38 Duration reached. Total events sent: 441368
+2026/05/28 23:24:38 Producer finished. Total events: 441368, Duration: 30s
+```

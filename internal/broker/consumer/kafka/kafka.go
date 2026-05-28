@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"time"
-	"trendservice/internal/aggregator"
-	"trendservice/internal/consumer"
+	"trendservice/internal/broker/consumer"
 	"trendservice/internal/domain"
 	"trendservice/internal/metrics"
+	"trendservice/internal/usecase/aggregator"
 	"trendservice/pkg/contract"
 
 	"github.com/segmentio/kafka-go"
@@ -44,9 +44,7 @@ func NewKafkaConsumer(cfg Config, agg aggregator.Aggregator, log *zap.Logger) *K
 		Brokers:        cfg.Brokers,
 		GroupID:        cfg.GroupID,
 		Topic:          cfg.Topic,
-		MinBytes:       10e3,
-		MaxBytes:       10e6,
-		CommitInterval: time.Second, // at-least-once, для трендов потеря/дубль некритичны
+		CommitInterval: time.Second,
 		StartOffset:    kafka.LastOffset,
 	})
 

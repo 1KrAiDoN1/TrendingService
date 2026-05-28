@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
-	aggregatoradapter "trendservice/internal/aggregator/adapter"
+	aggregatoradapter "trendservice/internal/usecase/aggregator/adapter"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

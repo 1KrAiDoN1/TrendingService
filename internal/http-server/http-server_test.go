@@ -9,7 +9,7 @@ import (
 	"trendservice/internal/domain"
 	"trendservice/internal/http-server/handler"
 	"trendservice/internal/http-server/routes"
-	"trendservice/internal/mocks"
+	"trendservice/internal/usecase/mocks"
 	"trendservice/pkg/lib/logger/zaplogger"
 
 	"github.com/gin-gonic/gin"

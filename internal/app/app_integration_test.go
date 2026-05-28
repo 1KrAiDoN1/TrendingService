@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 	"trendservice/internal/domain"
-	"trendservice/internal/mocks"
+	"trendservice/internal/usecase/mocks"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -18,7 +18,7 @@ func TestIntegration_ConsumerAggregatorStoplist(t *testing.T) {
 	t.Run("consumer sends events to aggregator", func(t *testing.T) {
 		mockConsumer := mocks.NewConsumer(t)
 		mockAgg := mocks.NewAggregator(t)
-		mockStoplist := mocks.NewStoplist(t)
+		mockStoplist := mocks.NewStoplistService(t)
 
 		ctx := context.Background()
 		now := time.Now().Unix()
@@ -37,8 +37,9 @@ func TestIntegration_ConsumerAggregatorStoplist(t *testing.T) {
 		assert.True(t, mockAgg.Add("test query", "user2", now, now, 60))
 		assert.False(t, mockStoplist.Has(ctx, "test query"))
 
-		mockConsumer.Run(ctx)
-		err := mockConsumer.Close()
+		err := mockConsumer.Run(ctx)
+		assert.NoError(t, err)
+		err = mockConsumer.Close()
 		assert.NoError(t, err)
 
 		mockConsumer.AssertExpectations(t)
@@ -46,7 +47,7 @@ func TestIntegration_ConsumerAggregatorStoplist(t *testing.T) {
 	})
 
 	t.Run("stoplist filters aggregator results", func(t *testing.T) {
-		mockStoplist := mocks.NewStoplist(t)
+		mockStoplist := mocks.NewStoplistService(t)
 
 		// Настраиваем для фильтрации
 		mockStoplist.On("Add", mock.Anything, "banned").Return(nil).Once()
@@ -124,7 +125,7 @@ func TestIntegration_FullPipeline(t *testing.T) {
 	t.Run("full event processing pipeline", func(t *testing.T) {
 		mockConsumer := mocks.NewConsumer(t)
 		mockAgg := mocks.NewAggregator(t)
-		mockStoplist := mocks.NewStoplist(t)
+		mockStoplist := mocks.NewStoplistService(t)
 
 		ctx := context.Background()
 		now := time.Now().Unix()
@@ -149,7 +150,8 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		}).Once()
 
 		// Выполняем pipeline
-		mockConsumer.Run(ctx)
+		err := mockConsumer.Run(ctx)
+		assert.NoError(t, err)
 		assert.True(t, mockAgg.Add("query1", "user1", now, now, 60))
 		assert.True(t, mockAgg.Add("query2", "user2", now, now, 60))
 
@@ -175,9 +177,10 @@ func TestIntegration_FullPipeline(t *testing.T) {
 		// Эмулируем ошибку при работе с кешем
 		mockCache.On("Set", ctx, "key", "value", 1*time.Hour).Return(assert.AnError).Once()
 
-		mockConsumer.Run(ctx)
+		err := mockConsumer.Run(ctx)
+		assert.NoError(t, err)
 
-		err := mockCache.Set(ctx, "key", "value", 1*time.Hour)
+		err = mockCache.Set(ctx, "key", "value", 1*time.Hour)
 		assert.Error(t, err)
 
 		mockConsumer.AssertExpectations(t)
@@ -234,7 +237,8 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 		// Параллельные Set операции
 		for i := 0; i < numOperations; i++ {
 			go func(idx int) {
-				mockCache.Set(ctx, "key"+string(rune(48+idx)), "value"+string(rune(48+idx)), 1*time.Hour)
+				err := mockCache.Set(ctx, "key"+string(rune(48+idx)), "value"+string(rune(48+idx)), 1*time.Hour)
+				assert.NoError(t, err)
 				done <- true
 			}(i)
 		}
@@ -242,7 +246,8 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 		// Параллельные Get операции
 		for i := 0; i < numOperations; i++ {
 			go func(idx int) {
-				mockCache.Get(ctx, "key"+string(rune(48+idx)))
+				_, err := mockCache.Get(ctx, "key"+string(rune(48+idx)))
+				assert.NoError(t, err)
 				done <- true
 			}(i)
 		}
@@ -265,7 +270,8 @@ func TestIntegration_LoggerFunctionality(t *testing.T) {
 		log.Debug("debug message")
 		log.Warn("warning message")
 
-		log.Sync()
+		// Sync может вернуть ошибку в тестовом окружении из-за файловых дескрипторов
+		_ = log.Sync()
 	},
 	)
 }

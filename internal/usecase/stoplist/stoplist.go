@@ -4,8 +4,8 @@ package stoplist
 
 import (
 	"context"
-	aggregatoradapter "trendservice/internal/aggregator/adapter"
-	"trendservice/internal/cache"
+	"trendservice/internal/repository/cache"
+	aggregatoradapter "trendservice/internal/usecase/aggregator/adapter"
 
 	"go.uber.org/zap"
 )
@@ -14,7 +14,7 @@ const stoplistKey = "trending:stoplist"
 
 // internal/stoplist/stoplist.go
 //
-//go:generate mockery --name Stoplist --dir internal/stoplist --output internal/mocks
+//go:generate mockery --name Stoplist --dir internal/usecase/stoplist --output internal/usecase/mocks
 type Stoplist interface {
 	// Has проверяет, находится ли запрос в стоп-листе.
 	Has(ctx context.Context, query string) bool

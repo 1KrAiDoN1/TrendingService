@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
-	"trendservice/internal/stoplist"
+	"trendservice/internal/usecase/stoplist"
 	"trendservice/pkg/lib/logger/zaplogger"
 
 	"github.com/stretchr/testify/assert"

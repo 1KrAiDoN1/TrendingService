@@ -31,15 +31,6 @@ func New(aggregator AggregatorService, stoplist StoplistService, defaultN, maxN 
 	}
 }
 
-// HandleTop обрабатывает запросы на получение топа популярных запросов.
-// @Summary Получить топ популярных запросов
-// @Description Возвращает топ-N самых популярных поисковых запросов за последние 5 минут
-// @Tags trends
-// @Accept json
-// @Produce json
-// @Param n query int false "Количество запросов в топе" default(10) minimum(1) maximum(100)
-// @Success 200 {object} map[string]interface{}
-// @Router /top [get]
 func (h *Handlers) HandleTop(c *gin.Context) {
 	metrics.TopRequests.Inc()
 	start := time.Now()
@@ -86,14 +77,6 @@ type stoplistReq struct {
 	Remove []string `json:"remove" binding:"omitempty"`
 }
 
-// HandleGetStoplist возвращает текущий стоп-лист.
-// @Summary Получить стоп-лист
-// @Description Возвращает список всех слов в стоп-листе
-// @Tags stoplist
-// @Accept json
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /stoplist [get]
 func (h *Handlers) HandleGetStoplist(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -107,15 +90,6 @@ func (h *Handlers) HandleGetStoplist(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-// HandleUpdateStoplist обновляет стоп-лист.
-// @Summary Обновить стоп-лист
-// @Description Добавляет или удаляет слова из стоп-листа
-// @Tags stoplist
-// @Accept json
-// @Produce json
-// @Param request body stoplistReq true "Слова для добавления/удаления"
-// @Success 204
-// @Router /stoplist [post]
 func (h *Handlers) HandleUpdateStoplist(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -144,14 +118,6 @@ func (h *Handlers) HandleUpdateStoplist(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// HandleHealth обрабатывает health check запросы.
-// @Summary Health check
-// @Description Проверка работоспособности сервиса
-// @Tags health
-// @Produce plain
-// @Success 200 {string} string "ok"
-// @Router /healthz [get]
 func (h *Handlers) HandleHealth(c *gin.Context) {
 	c.String(http.StatusOK, "ok")
 }
-

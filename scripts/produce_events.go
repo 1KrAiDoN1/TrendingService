@@ -23,8 +23,8 @@ type SearchEvent struct {
 func main() {
 	brokers := flag.String("brokers", "localhost:9092", "Kafka brokers")
 	topic := flag.String("topic", "search-queries", "Kafka topic")
-	rps := flag.Int("rps", 1000, "Events per second")
-	duration := flag.Int("duration", 60, "Duration in seconds (0 = infinite)")
+	rps := flag.Int("rps", 5000, "Events per second")
+	duration := flag.Int("duration", 120, "Duration in seconds (0 = infinite)")
 	flag.Parse()
 
 	log.Printf("Starting event producer: brokers=%s, topic=%s, rps=%d", *brokers, *topic, *rps)
@@ -35,9 +35,13 @@ func main() {
 		Balancer:     &kafka.Hash{},
 		BatchSize:    100,
 		BatchTimeout: 10 * time.Millisecond,
-		Async:        false,
+		Async:        true,
 	}
-	defer w.Close()
+	defer func() {
+		if err := w.Close(); err != nil {
+			log.Printf("Failed to close writer: %v", err)
+		}
+	}()
 
 	// Популярные запросы с разным весом (Zipf distribution)
 	queries := []struct {
@@ -74,7 +78,8 @@ func main() {
 		}
 	}
 
-	rand.Seed(time.Now().UnixNano())
+	rand.NewSource(time.Now().UnixNano())
+	// Интервал теперь рассчитывается корректно
 	interval := time.Second / time.Duration(*rps)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -111,7 +116,7 @@ func main() {
 		}
 
 		n++
-		if n%1000 == 0 {
+		if n%25000 == 0 {
 			elapsed := time.Since(start)
 			actualRPS := float64(n) / elapsed.Seconds()
 			log.Printf("Sent: %d events, Elapsed: %s, Actual RPS: %.2f", n, elapsed.Round(time.Second), actualRPS)

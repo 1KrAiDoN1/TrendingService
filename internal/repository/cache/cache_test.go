@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
-	"trendservice/internal/mocks"
+	"trendservice/internal/usecase/mocks"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

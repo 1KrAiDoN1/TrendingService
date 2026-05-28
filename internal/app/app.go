@@ -6,12 +6,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	aggregatoradapter "trendservice/internal/aggregator/adapter"
-	rediscache "trendservice/internal/cache/redis"
+	"trendservice/internal/broker/consumer/kafka"
 	"trendservice/internal/config"
-	"trendservice/internal/consumer/kafka"
 	httpserver "trendservice/internal/http-server"
-	"trendservice/internal/stoplist"
+	"trendservice/internal/repository/cache/redis"
+	aggregatoradapter "trendservice/internal/usecase/aggregator/adapter"
+	"trendservice/internal/usecase/stoplist"
 	"trendservice/pkg/lib/logger/zaplogger"
 
 	"go.uber.org/zap"
@@ -33,7 +33,7 @@ func Run(ctx context.Context, log *zap.Logger, cfg config.ServiceConfig) error {
 	)
 
 	// Инициализируем Redis клиент
-	redisClient, err := rediscache.NewClient(
+	redisClient, err := redis.NewClient(
 		cfg.Redis.Addr,
 		cfg.Redis.Password,
 		cfg.Redis.DB,
